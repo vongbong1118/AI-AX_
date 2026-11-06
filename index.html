@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DC Interlock 개선 PoC 대시보드 + 챗봇</title>
+<style>
+:root{--bg:#f6f7f9;--panel:#fff;--fg:#1c2330;--mute:#5d6778;--line:#dde1e8;--accent:#3b5bdb;--bad:#d9480f;--ok:#2b8a3e;--warn:#b7791f;--grid:#e6e9ef;--muted-bar:#aab2c0}
+@media (prefers-color-scheme:dark){:root{--bg:#12151b;--panel:#1b2029;--fg:#e8ebf1;--mute:#98a2b3;--line:#2c3340;--accent:#7c93ff;--bad:#ff8a5c;--ok:#69db7c;--warn:#f0c36b;--grid:#2a303b;--muted-bar:#5b6475;color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 "Pretendard","Malgun Gothic",system-ui,sans-serif}
+.app{display:grid;grid-template-columns:minmax(0,1fr) 400px;gap:16px;padding:16px;max-width:1600px;margin:0 auto}
+main{display:flex;flex-direction:column;gap:16px;min-width:0}
+h1{font-size:22px;margin:0;font-weight:600}h2{font-size:15px;margin:0;font-weight:600}
+.mute{color:var(--mute);font-size:12px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:16px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(170px,1fr))}
+.big{font-size:28px;font-weight:600;font-variant-numeric:tabular-nums;line-height:1.15}
+.big small{font-size:13px;color:var(--mute);font-weight:400}
+.scroll{overflow:auto;max-height:380px}
+table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}
+th,td{padding:6px 10px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
+th{position:sticky;top:0;background:var(--panel);color:var(--mute);font-weight:500}
+th:first-child,td:first-child,th:last-child,td:last-child{text-align:left}
+.hi{color:var(--bad)}
+svg text{fill:var(--mute);font-size:11px}
+aside{position:sticky;top:16px;height:calc(100vh - 32px);display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--line);border-radius:8px;min-height:0}
+aside header{padding:12px 16px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}
+details.cfg{border-bottom:1px solid var(--line);padding:8px 16px}
+details.cfg summary{cursor:pointer;font-weight:500}
+.cfg label{display:block;margin-top:8px;font-size:12px;color:var(--mute)}
+.cfg input{width:100%;margin-top:2px;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--fg);font:inherit}
+#log{flex:1;overflow:auto;padding:12px 16px;display:flex;flex-direction:column;gap:10px;min-height:0}
+.msg{max-width:92%;padding:8px 12px;border-radius:10px;white-space:pre-wrap;word-break:break-word}
+.msg.u{align-self:flex-end;background:var(--accent);color:#fff}
+.msg.a{align-self:flex-start;background:var(--bg);border:1px solid var(--line)}
+.msg.e{align-self:flex-start;background:transparent;border:1px solid var(--bad);color:var(--bad)}
+.sugg{display:flex;flex-wrap:wrap;gap:6px;padding:0 16px 8px}
+.sugg button{font:inherit;font-size:12px;padding:4px 8px;border:1px solid var(--line);border-radius:12px;background:var(--bg);color:var(--fg);cursor:pointer}
+form.send{display:flex;gap:8px;padding:12px 16px;border-top:1px solid var(--line)}
+form.send input{flex:1;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--fg);font:inherit;min-width:0}
+button.primary{padding:8px 14px;border:0;border-radius:6px;background:var(--accent);color:#fff;font:inherit;cursor:pointer}
+button:disabled{opacity:.5;cursor:default}
+:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+@media(max-width:960px){.app{grid-template-columns:1fr}aside{position:static;height:640px}}
+</style>
+</head>
+<body>
+<div class="app">
+<main>
+  <header>
+    <h1>DC Interlock 개선 PoC</h1>
+    <div class="mute">작성자 김봉수 · 2026.11.06 · 아래 수치는 모두 샘플 데이터이며, 기획서 원문 수치는 KPI 현재값·목표값, 기대 효과, 일정뿐입니다.</div>
+  </header>
+  <section class="grid" id="kpis"></section>
+  <section class="card"><h2>월별 DC Interlock율 추이</h2><div class="mute">점선은 목표. 샘플 데이터.</div><div id="trend"></div></section>
+  <section class="card"><h2>11월 조치 우선순위 (파레토)</h2><div class="mute">상위 12개 제품-항목의 11월 예상 건수(막대)와 누적 비중(선). 점선은 80%.</div><div id="pareto"></div></section>
+  <section class="card"><h2>우선 조치 List</h2><div class="mute">11월 예상 건수 = 10월 Interlock 건수 × 11월 물량 / 10월 물량. 누적 80%까지 우선 조치.</div>
+    <div class="scroll"><table><thead><tr><th>제품-항목</th><th>10월 Interlock율</th><th>10월 건수</th><th>11월 물량(Lot)</th><th>11월 예상 건수</th><th>누적 비중</th><th>구분</th></tr></thead><tbody id="ptb"></tbody></table></div></section>
+</main>
+<aside>
+  <header><h2>데이터 질문 챗봇</h2><button type="button" id="clear" class="mute" style="background:none;border:0;cursor:pointer;color:var(--mute)">대화 지우기</button></header>
+  <details class="cfg" id="cfg" open>
+    <summary>모델 설정</summary>
+    <label for="model">model_name<input id="model" autocomplete="off" placeholder="예: gpt-4o-mini"></label>
+    <label for="base">base_url<input id="base" autocomplete="off" placeholder="예: https://api.openai.com/v1"></label>
+    <label for="key">api_key<input id="key" type="password" autocomplete="off" placeholder="입력한 키는 이 탭 메모리에만 있습니다"></label>
+    <div class="mute" style="margin-top:6px">OpenAI 호환 /chat/completions 형식입니다. model_name과 base_url은 이 브라우저에 저장되고, api_key는 저장하지 않습니다.</div>
+  </details>
+  <div id="log" aria-live="polite"><div class="msg a">대시보드 데이터를 근거로 답합니다. 위에서 모델 설정을 입력한 뒤 질문해 보세요.</div></div>
+  <div class="sugg" id="sugg"></div>
+  <form class="send" id="form"><input id="q" placeholder="데이터에 대해 질문하세요" autocomplete="off" aria-label="질문"><button class="primary" id="go">전송</button></form>
+</aside>
+</div>
+<script>
+const DATA={"kpi": [{"id": "interlock", "label": "DC Interlock율", "current": 0.3, "target": 0.21}, {"id": "delay", "label": "Lot 공급 지연율 상승", "current": 0.2, "target": null}, {"id": "loss", "label": "엔지니어 공수 Loss", "current": 0.3, "target": null}], "trend": [{"month": "2025-11", "measured": 1080, "interlocks": 292, "rate": 0.2704, "lots": 940, "delayed": 179, "eng_hours": 1500, "loss_hours": 420}, {"month": "2025-12", "measured": 1120, "interlocks": 325, "rate": 0.2902, "lots": 980, "delayed": 206, "eng_hours": 1560, "loss_hours": 468}, {"month": "2026-01", "measured": 990, "interlocks": 327, "rate": 0.3303, "lots": 900, "delayed": 198, "eng_hours": 1450, "loss_hours": 464}, {"month": "2026-02", "measured": 1050, "interlocks": 326, "rate": 0.3105, "lots": 930, "delayed": 186, "eng_hours": 1500, "loss_hours": 465}, {"month": "2026-03", "measured": 1130, "interlocks": 316, "rate": 0.2796, "lots": 990, "delayed": 188, "eng_hours": 1580, "loss_hours": 458}, {"month": "2026-04", "measured": 1010, "interlocks": 323, "rate": 0.3198, "lots": 920, "delayed": 193, "eng_hours": 1480, "loss_hours": 459}, {"month": "2026-05", "measured": 1090, "interlocks": 371, "rate": 0.3404, "lots": 960, "delayed": 211, "eng_hours": 1540, "loss_hours": 508}, {"month": "2026-06", "measured": 1160, "interlocks": 360, "rate": 0.3103, "lots": 1010, "delayed": 202, "eng_hours": 1620, "loss_hours": 486}, {"month": "2026-07", "measured": 1070, "interlocks": 310, "rate": 0.2897, "lots": 950, "delayed": 180, "eng_hours": 1520, "loss_hours": 441}, {"month": "2026-08", "measured": 1120, "interlocks": 347, "rate": 0.3098, "lots": 980, "delayed": 196, "eng_hours": 1560, "loss_hours": 468}, {"month": "2026-09", "measured": 1040, "interlocks": 333, "rate": 0.3202, "lots": 930, "delayed": 195, "eng_hours": 1500, "loss_hours": 465}, {"month": "2026-10", "measured": 1100, "interlocks": 330, "rate": 0.3, "lots": 970, "delayed": 194, "eng_hours": 1550, "loss_hours": 465}], "oct_dc": [{"product": "A", "item": "RS", "oct_lots": 100, "measured": 48, "interlocks": 11}, {"product": "A", "item": "RC", "oct_lots": 100, "measured": 44, "interlocks": 7}, {"product": "A", "item": "IDOFF", "oct_lots": 100, "measured": 54, "interlocks": 22}, {"product": "A", "item": "IDLIN", "oct_lots": 100, "measured": 42, "interlocks": 10}, {"product": "A", "item": "VTH", "oct_lots": 100, "measured": 52, "interlocks": 32}, {"product": "A", "item": "BV", "oct_lots": 100, "measured": 48, "interlocks": 9}, {"product": "A", "item": "CAP", "oct_lots": 100, "measured": 42, "interlocks": 11}, {"product": "B", "item": "RS", "oct_lots": 90, "measured": 35, "interlocks": 13}, {"product": "B", "item": "RC", "oct_lots": 90, "measured": 35, "interlocks": 22}, {"product": "B", "item": "IDOFF", "oct_lots": 90, "measured": 42, "interlocks": 11}, {"product": "B", "item": "IDLIN", "oct_lots": 90, "measured": 47, "interlocks": 9}, {"product": "B", "item": "VTH", "oct_lots": 90, "measured": 41, "interlocks": 7}, {"product": "B", "item": "BV", "oct_lots": 90, "measured": 38, "interlocks": 6}, {"product": "B", "item": "CAP", "oct_lots": 90, "measured": 47, "interlocks": 12}, {"product": "C", "item": "RS", "oct_lots": 80, "measured": 28, "interlocks": 7}, {"product": "C", "item": "RC", "oct_lots": 80, "measured": 35, "interlocks": 7}, {"product": "C", "item": "IDOFF", "oct_lots": 80, "measured": 35, "interlocks": 7}, {"product": "C", "item": "IDLIN", "oct_lots": 80, "measured": 32, "interlocks": 7}, {"product": "C", "item": "VTH", "oct_lots": 80, "measured": 34, "interlocks": 14}, {"product": "C", "item": "BV", "oct_lots": 80, "measured": 28, "interlocks": 14}, {"product": "C", "item": "CAP", "oct_lots": 80, "measured": 28, "interlocks": 5}, {"product": "D", "item": "RS", "oct_lots": 70, "measured": 25, "interlocks": 5}, {"product": "D", "item": "RC", "oct_lots": 70, "measured": 24, "interlocks": 9}, {"product": "D", "item": "IDOFF", "oct_lots": 70, "measured": 20, "interlocks": 6}, {"product": "D", "item": "IDLIN", "oct_lots": 70, "measured": 23, "interlocks": 7}, {"product": "D", "item": "VTH", "oct_lots": 70, "measured": 23, "interlocks": 12}, {"product": "D", "item": "BV", "oct_lots": 70, "measured": 26, "interlocks": 5}, {"product": "D", "item": "CAP", "oct_lots": 70, "measured": 24, "interlocks": 11}, {"product": "E", "item": "RS", "oct_lots": 60, "measured": 12, "interlocks": 5}, {"product": "E", "item": "RC", "oct_lots": 60, "measured": 15, "interlocks": 4}, {"product": "E", "item": "IDOFF", "oct_lots": 60, "measured": 15, "interlocks": 4}, {"product": "E", "item": "IDLIN", "oct_lots": 60, "measured": 14, "interlocks": 8}, {"product": "E", "item": "VTH", "oct_lots": 60, "measured": 16, "interlocks": 4}, {"product": "E", "item": "BV", "oct_lots": 60, "measured": 13, "interlocks": 2}, {"product": "E", "item": "CAP", "oct_lots": 60, "measured": 15, "interlocks": 5}], "nov_vol": [{"product": "A", "nov_lots": 130}, {"product": "B", "nov_lots": 70}, {"product": "C", "nov_lots": 95}, {"product": "D", "nov_lots": 60}, {"product": "E", "nov_lots": 110}], "plan": [{"id": "w1", "week": "1주", "start": 1, "end": 1}, {"id": "w23", "week": "2~3주", "start": 2, "end": 3}, {"id": "w4", "week": "4주", "start": 4, "end": 4}]};
+const pct=d3f(0),pct1=d3f(1),int=n=>Math.round(n).toLocaleString('en-US');
+function d3f(d){return v=>(v*100).toFixed(d)+'%'}
+const f1=v=>v.toLocaleString('en-US',{minimumFractionDigits:1,maximumFractionDigits:1});
+// ---- compute ----
+const yr=DATA.trend[DATA.trend.length-1].month.slice(0,4);
+const ty=DATA.trend.filter(r=>r.month.startsWith(yr));
+const sum=(a,k)=>a.reduce((s,r)=>s+r[k],0);
+const year={interlock:sum(ty,'interlocks')/sum(ty,'measured'),delay:sum(ty,'delayed')/sum(ty,'lots'),loss:sum(ty,'loss_hours')/sum(ty,'eng_hours')};
+const tgt=DATA.kpi.find(k=>k.id==='interlock').target;
+const nov=Object.fromEntries(DATA.nov_vol.map(r=>[r.product,r.nov_lots]));
+let pri=DATA.oct_dc.map(r=>({key:r.product+'-'+r.item,product:r.product,item:r.item,oct_measured:r.measured,oct_n:r.interlocks,oct_rate:r.interlocks/r.measured,nov_lots:nov[r.product]||0,expected:r.interlocks*(nov[r.product]||0)/r.oct_lots})).filter(r=>r.expected>0).sort((a,b)=>b.expected-a.expected);
+const totExp=sum(pri,'expected');let c=0;
+pri=pri.map(r=>{const b=c/totExp;c+=r.expected;return {...r,cum:c/totExp,tier:b<0.8?'우선 조치':'모니터링'}});
+const hiN=pri.filter(r=>r.tier==='우선 조치').length;
+// ---- render ----
+const card=(t,v,s)=>`<div class="card"><span class="mute">${t}</span><span class="big">${v}</span><span class="mute">${s}</span></div>`;
+document.getElementById('kpis').innerHTML=
+ card('DC Interlock율 (올해 누계)',pct(year.interlock),`목표 ${pct(tgt)} · 개선폭 ${((year.interlock-tgt)*100).toFixed(0)}%p`)+
+ card('Lot 공급 지연율 (올해 누계)',pct(year.delay),'지연 Lot 수 / 공급 Lot 수')+
+ card('엔지니어 공수 Loss (올해 누계)',pct(year.loss),'Loss 공수 / 총 투입 공수')+
+ card('11월 예상 Interlock',`${int(totExp)} <small>건</small>`,`우선 조치 ${hiN} / 전체 ${pri.length}개 조합`);
+document.getElementById('ptb').innerHTML=pri.map(r=>`<tr><td>${r.key}</td><td>${pct1(r.oct_rate)}</td><td>${r.oct_n}</td><td>${r.nov_lots}</td><td>${f1(r.expected)}</td><td>${pct(r.cum)}</td><td class="${r.tier==='우선 조치'?'hi':''}">${r.tier}</td></tr>`).join('');
+const NS='http://www.w3.org/2000/svg';
+function svgEl(w,h){const s=document.createElementNS(NS,'svg');s.setAttribute('viewBox',`0 0 ${w} ${h}`);s.setAttribute('width','100%');return s}
+function add(p,t,a,txt){const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);if(txt!=null)e.textContent=txt;p.appendChild(e);return e}
+function drawTrend(){
+  const el=document.getElementById('trend');const W=Math.max(el.clientWidth,300),H=260,M={t:14,r:56,b:26,l:40};
+  const s=svgEl(W,H);const n=DATA.trend.length;
+  const x=i=>M.l+(W-M.l-M.r)*i/(n-1),y=v=>H-M.b-(H-M.b-M.t)*(v-.15)/.25;
+  [.15,.2,.25,.3,.35,.4].forEach(v=>{add(s,'line',{x1:M.l,x2:W-M.r,y1:y(v),y2:y(v),stroke:'var(--grid)'});add(s,'text',{x:M.l-6,y:y(v)+4,'text-anchor':'end'},pct(v))});
+  DATA.trend.forEach((r,i)=>{if(i%(W<520?2:1)===0||i===n-1)add(s,'text',{x:x(i),y:H-8,'text-anchor':'middle'},(+r.month.slice(5))+'월')});
+  add(s,'line',{x1:M.l,x2:W-M.r,y1:y(tgt),y2:y(tgt),stroke:'var(--mute)','stroke-dasharray':'5 4'});
+  add(s,'text',{x:W-M.r+6,y:y(tgt)+4,style:'fill:var(--fg)'},'목표 '+pct(tgt));
+  add(s,'path',{d:DATA.trend.map((r,i)=>(i?'L':'M')+x(i)+' '+y(r.rate)).join(' '),fill:'none',stroke:'var(--accent)','stroke-width':2,'stroke-linejoin':'round','stroke-linecap':'round'});
+  DATA.trend.forEach((r,i)=>{const d=add(s,'circle',{cx:x(i),cy:y(r.rate),r:3,fill:'var(--accent)'});add(d,'title',{},`${r.month} ${pct1(r.rate)} (${r.interlocks}/${r.measured}건)`)});
+  el.replaceChildren(s);
+}
+function drawPareto(){
+  const el=document.getElementById('pareto');const rows=pri.slice(0,12);const W=Math.max(el.clientWidth,300),H=300,M={t:14,r:44,b:64,l:40};
+  const s=svgEl(W,H);const bw=(W-M.l-M.r)/rows.length;const mx=Math.max(...rows.map(r=>r.expected))*1.1;
+  const y=v=>H-M.b-(H-M.b-M.t)*v/mx,y2=v=>H-M.b-(H-M.b-M.t)*v;
+  for(let i=0;i<=5;i++){const v=mx*i/5;add(s,'line',{x1:M.l,x2:W-M.r,y1:y(v),y2:y(v),stroke:'var(--grid)'});add(s,'text',{x:M.l-6,y:y(v)+4,'text-anchor':'end'},Math.round(v))}
+  [0,.5,1].forEach(v=>add(s,'text',{x:W-M.r+6,y:y2(v)+4},pct(v)));
+  add(s,'line',{x1:M.l,x2:W-M.r,y1:y2(.8),y2:y2(.8),stroke:'var(--mute)','stroke-dasharray':'5 4'});
+  const pts=[];
+  rows.forEach((r,i)=>{const cx=M.l+bw*(i+.5),w=Math.min(bw*.7,32);
+    const b=add(s,'rect',{x:cx-w/2,y:y(r.expected),width:w,height:y(0)-y(r.expected),rx:2,fill:r.tier==='우선 조치'?'var(--bad)':'var(--muted-bar)'});
+    add(b,'title',{},`${r.key} · 예상 ${f1(r.expected)}건 · 누적 ${pct(r.cum)}`);
+    add(s,'text',{transform:`translate(${cx},${H-M.b+12}) rotate(-45)`,'text-anchor':'end'},r.key);pts.push([cx,y2(r.cum)])});
+  add(s,'path',{d:pts.map((p,i)=>(i?'L':'M')+p[0]+' '+p[1]).join(' '),fill:'none',stroke:'var(--accent)','stroke-width':2,'stroke-linejoin':'round'});
+  pts.forEach(p=>add(s,'circle',{cx:p[0],cy:p[1],r:3,fill:'var(--accent)'}));
+  el.replaceChildren(s);
+}
+drawTrend();drawPareto();addEventListener('resize',()=>{drawTrend();drawPareto()});
+// ---- chatbot ----
+const ctx={
+ 설명:'아래는 DC Interlock 개선 PoC 대시보드의 전체 데이터다. 월별 추이, 10월 제품-항목별 Interlock, 11월 제품별 물량은 실제가 아닌 샘플 데이터다. KPI 현재값/목표값, 기대 효과, 일정은 기획서 원문 수치다.',
+ 기획서:{과제명:'DC Interlock 개선(CIP) 위한 Data 분석 Tool',의사결정질문:'DC Interlock율을 최대로 낮추기 위해서는 어떤 항목을 개선해야 하는가?',가설:'해당 DC Interlock 항목들을 개선하면 DC Interlock율을 최대로 낮출 수 있다.',KPI:{DC_Interlock율_현재값:0.30,목표값:tgt,측정방법:'매월 DC Interlock수/측정 수'},기대효과:{시간절감_hr:360,비용절감_원:10800000,Lot출하_증가:'1000 Lots -> 1300 Lots (+300)'},일정:DATA.plan},
+ 올해누계:{기준연도:yr,DC_Interlock율:+year.interlock.toFixed(4),Lot_공급지연율:+year.delay.toFixed(4),엔지니어_공수Loss율:+year.loss.toFixed(4)},
+ 월별추이:DATA.trend,
+ '10월_제품항목별_Interlock':DATA.oct_dc,
+ '11월_제품별_물량':DATA.nov_vol,
+ '11월_조치우선순위(예상건수순, 누적80%까지 우선 조치)':pri.map(r=>({제품항목:r.key,oct_rate:+r.oct_rate.toFixed(4),oct_n:r.oct_n,nov_lots:r.nov_lots,예상건수:+r.expected.toFixed(2),누적비중:+r.cum.toFixed(4),구분:r.tier}))
+};
+const SYSTEM='너는 DC Interlock 개선 PoC 대시보드의 데이터 분석 도우미다. 반드시 아래 [대시보드 데이터]만 근거로 한국어로 답한다. 규칙: (1) 데이터에 없는 내용은 추측하지 말고 "대시보드 데이터에 없습니다"라고 답한다. (2) 답변에 근거가 된 수치와 항목명을 명시한다. (3) 샘플 데이터에서 나온 수치에는 샘플 데이터임을 한 번 밝힌다. (4) 계산이 필요하면 계산식을 보여 준다. (5) 최종 조치 항목 선정은 담당자 승인이 필요함을 전제로 한다.\n\n[대시보드 데이터]\n'+JSON.stringify(ctx);
+const $=id=>document.getElementById(id);
+const store=(k,v)=>{try{v===undefined?localStorage.getItem(k):localStorage.setItem(k,v)}catch(e){}};
+try{$('model').value=localStorage.getItem('dc_model')||'';$('base').value=localStorage.getItem('dc_base')||''}catch(e){}
+$('model').addEventListener('change',()=>store('dc_model',$('model').value.trim()));
+$('base').addEventListener('change',()=>store('dc_base',$('base').value.trim()));
+let hist=[];
+const log=$('log');
+function bubble(cls,t){const d=document.createElement('div');d.className='msg '+cls;d.textContent=t;log.appendChild(d);log.scrollTop=log.scrollHeight;return d}
+const SG=['올해 누계 KPI를 요약해줘','11월에 가장 먼저 조치할 항목 5개와 근거는?','제품 A의 항목별 Interlock율을 비교해줘','목표 21% 달성까지 얼마나 줄여야 해?'];
+SG.forEach(t=>{const b=document.createElement('button');b.type='button';b.textContent=t;b.onclick=()=>{$('q').value=t;$('form').requestSubmit()};$('sugg').appendChild(b)});
+function endpoint(){let b=$('base').value.trim().replace(/\/+$/,'');return /\/chat\/completions$/.test(b)?b:b+'/chat/completions'}
+$('clear').onclick=()=>{hist=[];log.replaceChildren();bubble('a','대화를 지웠습니다.')};
+$('form').addEventListener('submit',async(e)=>{
+  e.preventDefault();
+  const q=$('q').value.trim();if(!q)return;
+  const model=$('model').value.trim(),base=$('base').value.trim(),key=$('key').value.trim();
+  if(!model||!base||!key){$('cfg').open=true;bubble('e','model_name, base_url, api_key를 모두 입력하세요.');return}
+  $('q').value='';bubble('u',q);hist.push({role:'user',content:q});
+  const w=bubble('a','…');$('go').disabled=true;
+  try{
+    const res=await fetch(endpoint(),{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+key},body:JSON.stringify({model,temperature:0,messages:[{role:'system',content:SYSTEM},...hist.slice(-12)]})});
+    const txt=await res.text();let j;try{j=JSON.parse(txt)}catch(_){}
+    if(!res.ok)throw new Error('HTTP '+res.status+' '+((j&&(j.error&&j.error.message||j.message))||txt.slice(0,200)));
+    const a=j&&j.choices&&j.choices[0]&&j.choices[0].message&&j.choices[0].message.content;
+    if(!a)throw new Error('응답 형식을 읽을 수 없습니다: '+txt.slice(0,200));
+    w.textContent=a;hist.push({role:'assistant',content:a});
+  }catch(err){
+    w.className='msg e';w.textContent='요청 실패: '+err.message+(err instanceof TypeError?' (네트워크 또는 CORS 차단일 수 있습니다. base_url과 서버의 CORS 허용을 확인하세요.)':'');hist.pop();
+  }finally{$('go').disabled=false;log.scrollTop=log.scrollHeight;$('q').focus()}
+});
+</script>
+</body>
+</html>
